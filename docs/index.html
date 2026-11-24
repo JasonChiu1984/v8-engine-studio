@@ -14,7 +14,7 @@
 <div class="stage-foot"><span class="hint"><i data-icon="orbit"></i><span class="desktop">拖曳旋轉 · 滾輪縮放</span><span class="touch">單指旋轉 · 雙指縮放</span></span><span class="stageTools"><button id="minus" title="縮小" aria-label="縮小"><i data-icon="minus"></i></button><span class="divider"></span><button id="home" title="重設視角與縮放" aria-label="重設視角與縮放"><i data-icon="home"></i></button><span class="divider"></span><button id="plus" title="放大" aria-label="放大"><i data-icon="plus"></i></button></span></div></main>
 <aside><h2 class="aside-title"><i data-icon="sliders"></i>場景控制</h2>
 <div class="section"><h3>結構視圖</h3><div class="modes"><button class="mode" id="assembled" aria-pressed="true"><i data-icon="cube"></i>組裝</button><button class="mode" id="exploded" aria-pressed="false"><i data-icon="layers"></i>爆炸圖</button></div><div class="line rangeHead"><label for="explode">拆解程度</label><output id="percent" for="explode" class="value">0%</output></div><input type="range" id="explode" min="0" max="100" value="0" step="1" aria-label="拆解程度"></div>
-<div class="section"><h3>運動控制</h3><div class="line switchLine"><span id="orbitText">自動環繞</span><button class="switch" role="switch" id="orbit" aria-labelledby="orbitText" aria-checked="true"></button></div><div class="line switchLine"><span id="runText">引擎運轉</span><button class="switch" role="switch" id="run" aria-labelledby="runText" aria-checked="true"></button></div><div class="speedrow"><span>播放速度</span><div class="chips" id="speed" aria-label="播放速度"><button data-rate=".5" aria-pressed="false">0.5×</button><button data-rate="1" aria-pressed="true">1×</button><button data-rate="2" aria-pressed="false">2×</button></div></div></div>
+<div class="section"><h3>運動控制</h3><div class="line switchLine"><span id="orbitText">自動環繞</span><button class="switch" role="switch" id="orbit" aria-labelledby="orbitText" aria-checked="true"></button></div><div class="line switchLine"><span id="runText">引擎運轉</span><button class="switch" role="switch" id="run" aria-labelledby="runText" aria-checked="true"></button></div><div class="line switchLine"><span id="soundText">引擎音浪</span><button class="switch" role="switch" id="sound" aria-labelledby="soundText" aria-checked="false"></button></div><div class="line rangeHead"><label for="rpm">基準轉速</label><output for="rpm" id="rpmValue" class="value">900 rpm</output></div><input id="rpm" type="range" min="800" max="6500" step="50" value="900"><div class="speedrow"><span>播放速度</span><div class="chips" id="speed" aria-label="播放速度"><button data-rate=".5" aria-pressed="false">0.5×</button><button data-rate="1" aria-pressed="true">1×</button><button data-rate="2" aria-pressed="false">2×</button></div></div></div>
 <div class="section"><h3>觀察工具</h3><div class="viewPresets" id="views" aria-label="預設視角"><button data-view="iso" aria-pressed="true">透視</button><button data-view="front" aria-pressed="false">正面</button><button data-view="side" aria-pressed="false">側面</button><button data-view="top" aria-pressed="false">俯視</button></div><div class="line switchLine"><span id="labelsText">零件標示</span><button class="switch" role="switch" id="labelToggle" aria-checked="false" aria-labelledby="labelsText"></button></div><p class="note">點選模型可辨識零件。運轉時可觀察活塞、連桿與曲軸的相對運動。</p></div></aside></div><div class="notice" role="status" id="notice"></div>
 <script>
 (function(){
@@ -4940,7 +4940,7 @@ void main() {
 const $=id=>document.getElementById(id), T=window.THREE;
 const area=$('viewport'), startAt=performance.now();
 const reduced=matchMedia('(prefers-reduced-motion: reduce)').matches;
-const state={explosion:0,goal:0,orbit:!reduced,run:!reduced,labels:false,speed:1,theta:.78,elevation:.26,zoom:1,angle:.42,snap:'iso'};
+const state={explosion:0,goal:0,orbit:!reduced,run:!reduced,labels:false,rpm:900,speed:1,theta:.78,elevation:.26,zoom:1,angle:.42,snap:'iso'};
 const partNames={block:'汽缸體',head:'汽缸蓋',intake:'進氣總成',pan:'油底殼',crankshaft:'曲軸',pistons:'活塞與連桿',valvetrain:'凸輪軸與汽門',drive:'皮帶與附件傳動',exhaust:'排氣歧管'};
 function partKey(s) {
  s=String(s||'').toLowerCase();
@@ -4975,13 +4975,81 @@ function preset(v,resetZoom=false){
 }
 on('assembled',()=>goal(0));on('exploded',()=>goal(1));$('explode').addEventListener('input',e=>goal(+e.target.value/100,true));
 on('orbit',()=>{orbitOn(!state.orbit);nextView=null;if(state.orbit)activeView(null)});
-on('run',()=>{state.run=!state.run;checked('run',state.run)});
+// A four-stroke V8 fires eight times per two crankshaft revolutions.
+function createExhaustVoice(context) {
+  const referenceRPM = 900;
+  const cycles = 12;
+  const cycleSeconds = 120 / referenceRPM;
+  const buffer = context.createBuffer(2, Math.round(context.sampleRate * cycleSeconds * cycles), context.sampleRate);
+  const banks = [0, 1, 0, 0, 1, 0, 1, 1];
+  let seed = 811;
+  function noise() {
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+    return seed / 2147483648 - 1;
+  }
+  for (let event = 0; event < cycles * 8; event++) {
+    const bank = banks[event % 8];
+    const start = Math.round((event * buffer.length / (cycles * 8)) + noise() * context.sampleRate * .00026);
+    const strength = .8 + .12 * noise();
+    let rumble = 0;
+    for (let j = 0; j < context.sampleRate * .07; j++) {
+      const t = j / context.sampleRate;
+      const attack = 1 - Math.exp(-t * 1800);
+      rumble = .84 * rumble + .16 * noise();
+      const thump = Math.sin(2*Math.PI*(64*t + .6*(1-Math.exp(-90*t)))) * Math.exp(-85*t);
+      const rasp = (.34*Math.sin(2*Math.PI*146*t) + .22*rumble) * Math.exp(-130*t);
+      const pulse = strength * attack * (thump + rasp);
+      const k = (start + j + buffer.length) % buffer.length;
+      buffer.getChannelData(bank)[k] += pulse * .61;
+      buffer.getChannelData(1-bank)[k] += pulse * .39;
+    }
+  }
+  const source = context.createBufferSource();
+  source.buffer = buffer;
+  source.loop = true;
+  const filter = context.createBiquadFilter();
+  filter.type = 'lowpass'; filter.Q.value = .62;
+  const gain = context.createGain();
+  gain.gain.value = 0;
+  source.connect(filter).connect(gain).connect(context.destination);
+  source.start();
+  return function setVoice(rpm, audible) {
+    const t = context.currentTime;
+    source.playbackRate.setTargetAtTime(rpm / referenceRPM, t, .07);
+    filter.frequency.setTargetAtTime(Math.min(6000, 560 + rpm * .75), t, .08);
+    gain.gain.setTargetAtTime(audible ? .31 : 0, t, .025);
+  };
+}
+
+let audioContext, voice, soundEnabled=false;
+function refreshVoice() {
+ const effectiveRPM=state.rpm*state.speed;
+ $('rpmValue').textContent=state.rpm+' rpm';
+ $('rpm').setAttribute('aria-valuetext',state.rpm+' rpm');
+ if(voice)voice(effectiveRPM,soundEnabled && state.run && !document.hidden);
+}
+on('sound',async()=>{
+ soundEnabled=!soundEnabled;
+ checked('sound',soundEnabled);
+ if(soundEnabled){
+  try{
+   if(!audioContext)audioContext=new (window.AudioContext || window.webkitAudioContext)();
+   const ready=audioContext.resume();
+   if(!voice)voice=createExhaustVoice(audioContext);
+   await ready;
+  }catch(error){soundEnabled=false;checked('sound',false);$('notice').textContent='此瀏覽器無法啟動引擎音效。';}
+ }
+ refreshVoice();
+});
+$('rpm').addEventListener('input',e=>{state.rpm=Number(e.target.value);refreshVoice()});
+document.addEventListener('visibilitychange',refreshVoice);
+on('run',()=>{state.run=!state.run;checked('run',state.run);refreshVoice()});
 on('home',()=>preset('iso',true));on('minus',()=>zoom(1/1.18));on('plus',()=>zoom(1.18));
 on('labelToggle',()=>{state.labels=!state.labels;checked('labelToggle',state.labels);$('labels').hidden=!state.labels;});
 on('closeSelection',()=>{$('selection').hidden=true});
 on('fullscreen',async()=>{try{if(document.fullscreenElement)await document.exitFullscreen();else await document.documentElement.requestFullscreen()}catch(e){$('notice').textContent='目前視窗不支援全螢幕。'}});
 document.addEventListener('fullscreenchange',()=>{document.querySelector('.fulltext').textContent=document.fullscreenElement?'離開全螢幕':'全螢幕'});
-document.querySelectorAll('[data-rate]').forEach(b=>b.onclick=()=>{state.speed=+b.dataset.rate;document.querySelectorAll('[data-rate]').forEach(n=>n.setAttribute('aria-pressed',String(b===n)))});
+document.querySelectorAll('[data-rate]').forEach(b=>b.onclick=()=>{state.speed=+b.dataset.rate;refreshVoice();document.querySelectorAll('[data-rate]').forEach(n=>n.setAttribute('aria-pressed',String(b===n)))});
 document.querySelectorAll('[data-view]').forEach(b=>b.onclick=()=>preset(b.dataset.view));
 checked('orbit',state.orbit);checked('run',state.run);
 on('retry',()=>location.reload());
@@ -5133,7 +5201,7 @@ function mount(){
   if(state.explosion!==state.goal){const f=1-Math.exp(-dt*4.8);state.explosion+=(state.goal-state.explosion)*f;if(Math.abs(state.goal-state.explosion)<.001)state.explosion=state.goal;updateUI();}
   if(nextView){const f=reduced?1:1-Math.exp(-dt*8);state.theta+=(nextView.yaw-state.theta)*f;state.elevation+=(nextView.pitch-state.elevation)*f;if(Math.abs(state.theta-nextView.yaw)+Math.abs(state.elevation-nextView.pitch)<.001){state.theta=nextView.yaw;state.elevation=nextView.pitch;nextView=null}}
   else if(state.orbit&&!pointers.size&&t-startAt>2400){state.theta+=dt*.115*state.speed;if(state.snap)activeView(null);}
-  if(state.run)state.angle=(state.angle+dt*2.55*state.speed)%(4*Math.PI);
+  if(state.run)state.angle=(state.angle+dt*2.55*(state.rpm/900)*state.speed)%(4*Math.PI);
   const key=[state.theta,state.elevation,state.explosion,state.angle,state.zoom,state.labels,w,h].join('/');
   if(!moving&&!wasMoving&&key===oldKey)return;
   if(software&&t-lastDraw<65)return;
